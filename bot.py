@@ -7,20 +7,31 @@ from random import choice
 
 bot = commands.Bot(command_prefix='!', description='10 man game planner')
 db = pickledb.load('tenman.db', False)
+
 lobby_list = []
 
-threshold = 10
-team_size = 10
+# Thresholds for team point differences.
+default_threshold = 10
+max_threshold = 100
+
+# Number of people needed to form teams.
+lobby_size = 10
 
 def get_score(user):
     return db.get(user.id) or 0
 
-def gen_teams():
+def gen_teams(threshold=default_threshold):
+    global lobby_list
+
     players = [(get_score(user), user.display_name) for user in lobby_list]
     options = []
-    num_players = len(lobby_list)
 
-    for choices in combinations(range(num_players), num_players // 2):
+    # Team size is lobby size / 2.
+    num_players = len(lobby_list)
+    to_choose = max(num_players // 2, 1)
+
+    # Find all possible team setups.
+    for choices in combinations(range(num_players), to_choose):
         team_a = 0
         team_a_players = []
         team_b = 0
@@ -34,16 +45,47 @@ def gen_teams():
                 team_b += players[i][0]
                 team_b_players.append(players[i][1])
 
-        if abs(team_a - team_b) < threshold:
+        if abs(team_a - team_b) <= threshold:
             options.append((team_a, team_b, team_a_players, team_b_players))
 
-    return choice(options)
+    # Return a random team setup.
+    if options:
+        return choice(options)
+
+    # wtf lol
+    elif threshold <= max_threshold:
+        return gen_teams(threshold + 5)
+    else:
+        return -1, -1, [], []
+
+async def show_teams(ctx):
+    global lobby_list
+
+    await ctx.send('Creating teams...')
+
+    team_a, team_b, team_a_players, team_b_players = gen_teams()
+
+    if team_a == -1:
+        await ctx.send('Failed to create teams! Report this to Brian 😒')
+        return
+
+    lobby_list = []
+    messages = [
+        '**TEAM A** ({})'.format(team_a),
+        '\n'.join(team_a_players),
+        '\n',
+        '**TEAM B** ({})'.format(team_b),
+        '\n'.join(team_b_players)
+    ]
+
+    await ctx.send('\n'.join(messages))
 
 @bot.command()
 async def getrank(ctx):
     message = ctx.message
     num_mentions = len(message.mentions)
 
+    # If no one is mentioned, get rank of author. Otherwise, get rank of target.
     if num_mentions == 0:
         user = message.author
     elif num_mentions == 1:
@@ -52,13 +94,11 @@ async def getrank(ctx):
         await ctx.send('You can only mention at most one user.')
         return
     
-    user = message.mentions[0]
     rank = get_score(user)
-
     await ctx.send('{} is rank {}'.format(user.display_name, rank))
 
 @bot.command()
-async def setrank(ctx, _, new_rank: int):
+async def setrank(ctx, mentioned_user, new_rank: int):
     message = ctx.message
 
     if len(message.mentions) != 1:
@@ -89,16 +129,8 @@ async def joinlobby(ctx):
     lobby_list.append(user)
     await ctx.send('{} has joined the 10-man lobby.'.format(user.display_name))
 
-    if len(lobby_list) >= team_size:
-        await ctx.send('Creating teams...\n\n\n')
-
-        team_a, team_b, team_a_players, team_b_players = gen_teams()
-        lobby_list = []
-
-        await ctx.send('**TEAM A** ({})'.format(team_a))
-        await ctx.send('\n'.join(team_a_players))
-        await ctx.send('**TEAM B** ({})'.format(team_b))
-        await ctx.send('\n'.join(team_b_players))
+    if len(lobby_list) >= lobby_size:
+        await show_teams(ctx)
 
 @bot.command()
 async def leavelobby(ctx):
@@ -121,7 +153,7 @@ async def lobby(ctx):
 
         output = []
 
-        for i in range(team_size):
+        for i in range(lobby_size):
             if i >= num_lobby:
                 name = ''
             else:
@@ -132,5 +164,41 @@ async def lobby(ctx):
         await ctx.send('\n'.join(output))
     else:
         await ctx.send('The 10-man lobby is currently empty.')
+
+@bot.command()
+async def lobbyadd(ctx):
+    added = []
+
+    for user in ctx.message.mentions:
+        if len(lobby_list) >= lobby_size:
+            break
+
+        if user not in lobby_list:
+            lobby_list.append(user)
+            added.append(user.display_name)
+
+    if added:
+        names = ', '.join(added)
+    else:
+        names = 'No one'
+
+    await ctx.send('{} has been added to the lobby.'.format(names))
+
+    if len(lobby_list) >= lobby_size:
+        await show_teams(ctx)
+
+@bot.command()
+async def lobbyremove(ctx):
+    global lobby_list
+
+    mentions = ctx.message.mentions
+    lobby_list = [user for user in lobby_list if user not in mentions]
+
+    if mentions:
+        names = ', '.join([user.display_name for user in mentions])
+    else:
+        names = 'No one'
+
+    ctx.send('{} has been removed from the lobby.'.format(names))
 
 bot.run(os.environ['DISCORD_TOKEN'])
