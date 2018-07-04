@@ -8,6 +8,7 @@ from random import choice
 bot = commands.Bot(command_prefix='!', description='10 man game planner')
 db = pickledb.load('tenman.db', False)
 
+last_lobby = None
 lobby_list = []
 
 # Thresholds for team point differences.
@@ -59,7 +60,7 @@ def gen_teams(threshold=default_threshold):
         return -1, -1, [], []
 
 async def show_teams(ctx):
-    global lobby_list
+    global lobby_list, last_lobby
 
     await ctx.send('Creating teams...')
 
@@ -69,7 +70,9 @@ async def show_teams(ctx):
         await ctx.send('Failed to create teams! Report this to Brian 😒')
         return
 
+    last_lobby = lobby_list
     lobby_list = []
+
     messages = [
         '**TEAM A** ({})'.format(team_a),
         '\n'.join(team_a_players),
@@ -200,5 +203,15 @@ async def lobbyremove(ctx):
         names = 'No one'
 
     ctx.send('{} has been removed from the lobby.'.format(names))
+
+@bot.command()
+async def lobbyreroll(ctx):
+    global last_lobby, lobby_list
+
+    if not last_lobby:
+       await ctx.send('There is no previous lobby to reroll.') 
+    else:
+        lobby_list = last_lobby
+        await show_teams(ctx)
 
 bot.run(os.environ['DISCORD_TOKEN'])
